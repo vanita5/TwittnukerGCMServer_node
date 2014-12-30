@@ -1,0 +1,9 @@
+{
+  "name": "TwittnukerGCMServer",
+  "description": "Twittnuker self-hosted GCM Push Server",
+  "dependencies": {
+    "node-gcm" : ">= 0.9.12",
+    "mongoose" : ">= 3.8.21",
+    "twit" : ">= 1.1.18"
+  }
+}
