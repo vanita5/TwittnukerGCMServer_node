@@ -2,17 +2,16 @@
 
 var http = require('http'),
     https = require('https'),
+    server = http.createServer(handler).listen(73331),
     path = require('path'),
     url = require('url'),
     gcm = require('node-gcm'),
-    mongoose = require('mongoose'),
-    Schema = mongoose.Schema,
-    twit = require('twit');
+    twit = require('twit'),
+    low = require('lowdb'),
+    db = low('db.json');
 
 
 var settings = {
-    mongoadress: 'mongodb://tgcms:parkbank@localhost:21004/tgcms',
-    
     gcmkey: 'XXX',
     
     profiles: {
@@ -29,30 +28,12 @@ var settings = {
     }
 };
 
-
-//database init
-//
-
-var userSchema = new Schema({
-    userid: String,
-    regid: String
-});
-
-var User = mongoose.model('User', userSchema),
-    db = mongoose.connection;
-
-mongoose.connect(settings.mongoadress);
-
-//gcm
-//
 var sender = new gcm.Sender(settings.gcmkey);
-
 
 
 //http handler
 //
 function handler(req, res) {
-    console.log(req);
     var reqpath = url.parse(req.url).pathname;
     if (req.method === 'POST') {
         switch (reqpath) {
@@ -99,29 +80,13 @@ function checkRegisterReq(req, res, cb){
     });
 }
 
-function register(req, res, regid, username) {
-    User.remove({userid: username}, function (err) {
-        if (err) {
-            console.log(err);
-            throwerr(res, 500, 'Server Error');
-            return;
-        }
-        var thisuser = new User({
-            userid: username,
-            regid: regid
-        });
-        thisuser.save(function (err, ret) {
-            updateTwitterStreams();
-            if (err) {
-                console.log(err);
-                throwerr(res, 500, 'Server Error');
-                return;
-            } else {    
-                res.writeHead(200);
-                res.end('{}');
-            }
-        });
-    });
+function register(req, res, regid, userid) {
+    db('users').remove({userid: userid});
+    db('users').push({userid: userid,
+                      regid: regid});
+    res.writeHead(200);
+    res.end('{}');
+    updateTwitterStreams();
 }
 
 function checkUnregisterReq(req, res, cb) {
@@ -134,28 +99,20 @@ function checkUnregisterReq(req, res, cb) {
             throwerr(res, 400, 'No registration id was given');
             return;
         }
-        User.findOne({regid: data.regid}, 'regid', function (err, person) {
-            if (person) {
-                cb(data.regid);
-            } else {
-                throwerr(res, 400, 'User does not exist or has already been removed');
-            }
-        });
+        var person = db('users').find({regid: data.regid}).value();
+        if (person) {
+            cb(data.regid);
+        } else {
+            throwerr(res, 400, 'User does not exist or has already been removed');
+        }
     });
 }
 
 function unregister(req, res, regid) {
-    User.remove({regid: regid}, function (err) {
-        if (err) {
-            console.log(err);
-            throwerr(res, 500, 'Server Error');
-            return;
-        } else {
-            res.writeHead(200);
-            res.end('{}');
-            updateTwitterStreams();
-        }
-    });
+    db('users').remove({regid: regid});
+    res.writeHead(200);
+    res.end('{}');
+    updateTwitterStreams();
 }
 
 function throwerr(res, errcode, text) {
@@ -209,38 +166,15 @@ function validateToken(access_token, cb) {
     }).end();
 }
 
-var server = http.createServer(handler);
-
-db.on('error', console.error.bind(console, 'connection error:'));
-
-db.once('open', function () {
-    console.log('connected to database');
-    //start http server    
-    server.listen(73331);
-    //init all twitter streams
-    updateTwitterStreams();
-});
-
 //Twitter Streams
 //
 function updateTwitterStreams(){
     for (var userid in settings.profiles) {
         var profile = settings.profiles[userid];
-        User.findOne({
-            userid: userid
-        }, 'regid', buildDbCb(userid, profile));
-    }
-    
-    function buildDbCb(userid, profile) {
-        return function(err, person){dbCallback(err, person, userid, profile);};
-    }    
-    
-    function dbCallback(err, person, userid, profile) {
-        if (err) {
-            console.log(err);
-            profile.stream = null;
-        } else if (person) {
+        var person = db('users').find({userid: userid}).value();
+        if (person) {
             if (!person.regid) {
+                console.log(userid + ' has no saved regid');
                 profile.stream = null;
             } else if (!profile.stream) {
                 profile.stream = profile.Twit.stream('user', {
@@ -249,10 +183,9 @@ function updateTwitterStreams(){
                 profile.stream.on('connect', buildConnectCb(userid, person.regid, profile));
             }
         } else {
-            console.log(profile.userid + ' is not in the database yet.');
+            console.log(userid + ' is not in the database yet.');
             profile.stream = null;
         }
-
     }
     
     function buildConnectCb( userid, regid, profile){
@@ -361,3 +294,8 @@ function sendNotification(msg, regid) {
         }
     });
 }
+
+//init
+//
+//init all twitter streams
+updateTwitterStreams();
