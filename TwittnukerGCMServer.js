@@ -8,28 +8,35 @@ var http = require('http'),
     gcm = require('node-gcm'),
     twit = require('twit'),
     low = require('lowdb'),
-    db = low('db.json');
+    db = low('db.json'),
+    settingsdb = low('settings.json');
 
 
 var settings = {
-    gcmkey: 'XXX',
-    
-    profiles: {
-        'mail@example.com': {
-            twid: '000000000', //twitter user id
-            Twit: new twit({
-                'consumer_key': '',
-                'consumer_secret': '',
-                'access_token': '',
-                'access_token_secret': ''
-            }),
-            stream: null
-        }
-    }
+    gcmkey: null,
+    profiles: []
 };
 
+function loadSettings(){
+    var gcm = settingsdb('gcm').findLast().cloneDeep().value();
+    var profiles = settingsdb('profiles').cloneDeep().value();
+    if(gcm && gcm.key){
+        settings.gcmkey = gcm.key;
+    } else{
+        throw new Error('No gcm key was specified');
+    }
+    if(profiles.length !== 0){
+        profiles.forEach(function(profile){
+            profile.Twit = new twit(profile.twitter);
+            profile.stream = null;
+        });
+        settings.profiles = profiles;
+    } else{
+        console.log('No profile was specified');
+    }
+}
+            
 var sender = new gcm.Sender(settings.gcmkey);
-
 
 //http handler
 //
@@ -166,36 +173,44 @@ function validateToken(access_token, cb) {
     }).end();
 }
 
-//Twitter Streams
+//Twitter
 //
 function updateTwitterStreams(){
-    for (var userid in settings.profiles) {
-        var profile = settings.profiles[userid];
-        var person = db('users').find({userid: userid}).value();
+    settings.profiles.forEach(function(profile){
+        var person = db('users').find({userid: profile.userid}).value();
         if (person) {
             if (!person.regid) {
-                console.log(userid + ' has no saved regid');
+                console.log(profile.userid + ' has no saved regid');
                 profile.stream = null;
             } else if (!profile.stream) {
+                
                 profile.stream = profile.Twit.stream('user', {
                     with: 'followings'
                 });
-                profile.stream.on('connect', buildConnectCb(userid, person.regid, profile));
+                profile.stream.on('connect', buildConnectCb(profile, person.regid));
+                console.log(profile.Twit.getAuth());
             }
         } else {
-            console.log(userid + ' is not in the database yet.');
+            console.log(profile.userid + ' is not in the database yet.');
             profile.stream = null;
         }
-    }
+    });
     
-    function buildConnectCb( userid, regid, profile){
-        return function(){onTwitterStreamConnect(userid, regid, profile);};
+    function buildConnectCb(profile, regid){
+        return function(){onTwitterStreamConnect(profile, regid);};
     }
 }
 
-function onTwitterStreamConnect(userid, regid, profile){
-    console.log('Twitter connection for ' + userid + ' established');
-    handleTwitterStream(profile, regid);
+function onTwitterStreamConnect(profile, regid){
+    getTwitterId(profile, function(err, twid){
+        if(err && profile.twid || !err){
+            profile.twid = twid || profile.twid;
+            console.log('Twitter connection for ' + profile.userid + ' established');
+            handleTwitterStream(profile, regid);
+        } else{
+            console.log(err);
+        }
+    });
 }
 
 function handleTwitterStream(profile, regid) {
@@ -266,6 +281,12 @@ function handleTwitterStream(profile, regid) {
     });
 }
 
+function getTwitterId(profile, cb) {
+    profile.Twit.get('account/verify_credentials',{skip_status: true}, function (err, data, response) {
+        cb(err, data.id_str);
+    });
+}
+
 //gcm
 //
 function notify(regid, data_account, data_fromuser, data_type, data_msg, data_image){
@@ -297,5 +318,5 @@ function sendNotification(msg, regid) {
 
 //init
 //
-//init all twitter streams
+loadSettings();
 updateTwitterStreams();
