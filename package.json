@@ -3,7 +3,7 @@
   "description": "Twittnuker self-hosted GCM Push Server",
   "dependencies": {
     "node-gcm" : ">= 0.9.12",
-    "mongoose" : ">= 3.8.21",
+    "lowdb" : ">= 0.6.0",
     "twit" : ">= 1.1.18"
   },
   "repository": {
